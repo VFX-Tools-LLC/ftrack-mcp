@@ -11,6 +11,19 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { FtrackClient } from './ftrack-client.js';
 
+// Sanitization helpers for ftrack query language injection prevention
+function escapeQL(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+const VALID_IDENTIFIER = /^[\w.]+$/;
+function validateIdentifier(value, label) {
+  if (!VALID_IDENTIFIER.test(value)) {
+    throw new Error(`Invalid ${label}: must contain only letters, digits, underscores, or dots`);
+  }
+  return value;
+}
+
 // Initialize ftrack client
 let client;
 try {
@@ -1015,10 +1028,10 @@ server.tool(
     try {
       let expression = `select id, name, type.name, status.name, priority.name, start_date, end_date, assignments.resource.username from Task`;
       const conditions = [];
-      if (project_id) conditions.push(`project_id is "${project_id}"`);
-      if (parent_id) conditions.push(`parent_id is "${parent_id}"`);
-      if (assignee_id) conditions.push(`assignments any (resource_id is "${assignee_id}")`);
-      if (status) conditions.push(`status.name is "${status}"`);
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (parent_id) conditions.push(`parent_id is "${escapeQL(parent_id)}"`);
+      if (assignee_id) conditions.push(`assignments any (resource_id is "${escapeQL(assignee_id)}")`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
       if (conditions.length > 0) {
         expression += ` where ${conditions.join(' and ')}`;
       }
@@ -1075,8 +1088,8 @@ server.tool(
     try {
       let expression = `select id, version, asset.name, task.name, user.username, date, comment from AssetVersion`;
       const conditions = [];
-      if (asset_id) conditions.push(`asset_id is "${asset_id}"`);
-      if (task_id) conditions.push(`task_id is "${task_id}"`);
+      if (asset_id) conditions.push(`asset_id is "${escapeQL(asset_id)}"`);
+      if (task_id) conditions.push(`task_id is "${escapeQL(task_id)}"`);
       if (conditions.length > 0) {
         expression += ` where ${conditions.join(' and ')}`;
       }
@@ -1161,8 +1174,12 @@ server.tool(
   },
   async ({ entity_type, entity_id, projections }) => {
     try {
-      const attrs = projections?.length ? projections.join(', ') : '*';
-      const expression = `select ${attrs} from ${entity_type} where id is "${entity_id}"`;
+      const attrs = projections?.length
+        ? projections.map(p => validateIdentifier(p, 'projection')).join(', ')
+        : '*';
+      const safeType = validateIdentifier(entity_type, 'entity_type');
+      const expression = `select ${attrs} from ${safeType} where id is "${escapeQL(entity_id)}"`;
+
       const result = await client.query(expression);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -1216,7 +1233,7 @@ server.tool(
   },
   async ({ entity_type, entity_id, limit }) => {
     try {
-      const expression = `select id, content, author.username, date from Note where parent_type is "${entity_type}" and parent_id is "${entity_id}" order by date descending limit ${limit}`;
+      const expression = `select id, content, author.username, date from Note where parent_type is "${escapeQL(entity_type)}" and parent_id is "${escapeQL(entity_id)}" order by date descending limit ${limit}`;
       const result = await client.query(expression);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -1308,7 +1325,7 @@ server.tool(
     try {
       let expression = `select id, name, description, created_at, end_date from ReviewSession`;
       if (project_id) {
-        expression += ` where project_id is "${project_id}"`;
+        expression += ` where project_id is "${escapeQL(project_id)}"`;
       }
       expression += ` order by created_at descending limit ${limit}`;
       const result = await client.query(expression);
