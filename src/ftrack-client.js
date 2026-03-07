@@ -66,6 +66,9 @@ export class FtrackClient {
    */
   async callOne(operation) {
     const results = await this.call([operation]);
+    if (results[0] === undefined) {
+      throw new Error('ftrack API returned an empty response');
+    }
     return results[0];
   }
 

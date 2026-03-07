@@ -17,6 +17,22 @@ function escapeQL(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function flattenDatetimes(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== 'object') return obj;
+  if (obj.__type__ === 'datetime' && obj.value) return obj.value;
+  if (Array.isArray(obj)) return obj.map(flattenDatetimes);
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = flattenDatetimes(value);
+  }
+  return result;
+}
+
+function formatResult(result) {
+  return JSON.stringify(flattenDatetimes(result), null, 2);
+}
+
 const VALID_IDENTIFIER = /^[\w.]+$/;
 function validateIdentifier(value, label) {
   if (!VALID_IDENTIFIER.test(value)) {
@@ -60,7 +76,7 @@ server.tool(
     try {
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -81,7 +97,7 @@ server.tool(
     try {
       const result = await client.parseQuery(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -100,7 +116,7 @@ server.tool(
     try {
       const result = await client.querySchemas();
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -119,7 +135,7 @@ server.tool(
     try {
       const result = await client.queryServerInformation();
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -144,7 +160,7 @@ server.tool(
     try {
       const result = await client.search(expression, entity_type, terms, context_id, object_type_ids);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -170,7 +186,7 @@ server.tool(
     try {
       const result = await client.create(entity_type, entity_data);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -193,7 +209,7 @@ server.tool(
     try {
       const result = await client.update(entity_type, entity_id, entity_data);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -215,7 +231,7 @@ server.tool(
     try {
       const result = await client.delete(entity_type, entity_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -241,7 +257,7 @@ server.tool(
     try {
       const result = await client.addUserSecurityRole(user_id, security_role_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -263,7 +279,7 @@ server.tool(
     try {
       const result = await client.removeUserSecurityRole(user_id, security_role_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -286,7 +302,7 @@ server.tool(
     try {
       const result = await client.updateUserSecurityRole(user_id, security_role_id, is_active);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -309,7 +325,7 @@ server.tool(
     try {
       const result = await client.grantUserSecurityRoleProject(user_id, security_role_id, project_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -332,7 +348,7 @@ server.tool(
     try {
       const result = await client.revokeUserSecurityRoleProject(user_id, security_role_id, project_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -357,7 +373,7 @@ server.tool(
     try {
       const result = await client.assumeUser(user_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -376,7 +392,7 @@ server.tool(
     try {
       const result = await client.unAssumeUser();
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -398,7 +414,7 @@ server.tool(
     try {
       const result = await client.sendUserInvite(user_id, email);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -424,7 +440,7 @@ server.tool(
     try {
       const result = await client.grantApiKeyProject(api_key_id, project_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -446,7 +462,7 @@ server.tool(
     try {
       const result = await client.revokeApiKeyProject(api_key_id, project_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -468,7 +484,7 @@ server.tool(
     try {
       const result = await client.grantApiKeySecurityRole(api_key_id, security_role_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -490,7 +506,7 @@ server.tool(
     try {
       const result = await client.revokeApiKeySecurityRole(api_key_id, security_role_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -516,7 +532,7 @@ server.tool(
     try {
       const result = await client.configureOtp(user_id, otp_type);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -537,7 +553,7 @@ server.tool(
     try {
       const result = await client.configureTotp(user_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -558,7 +574,7 @@ server.tool(
     try {
       const result = await client.generateTotp(user_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -579,7 +595,7 @@ server.tool(
     try {
       const result = await client.disable2FA(user_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -607,7 +623,7 @@ server.tool(
     try {
       const result = await client.getUploadMetadata(component_id, file_size, file_name, checksum);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -633,7 +649,7 @@ server.tool(
     try {
       const result = await client.completeMultipartUpload(component_id, upload_id, parts);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -655,7 +671,7 @@ server.tool(
     try {
       const result = await client.generateSignedUrl(component_id, operation);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -677,7 +693,7 @@ server.tool(
     try {
       const result = await client.encodeMedia(component_id, options || {});
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -704,7 +720,7 @@ server.tool(
     try {
       const result = await client.convertEntity(entity_type, entity_id, target_type);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -731,7 +747,7 @@ server.tool(
     try {
       const result = await client.permissions(entity_type, entity_id, actions);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -756,7 +772,7 @@ server.tool(
     try {
       const result = await client.storageUsage(project_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -784,7 +800,7 @@ server.tool(
     try {
       const result = await client.sendReviewSessionInvite(review_session_id, email, name, message);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -809,7 +825,7 @@ server.tool(
     try {
       const result = await client.resetRemoteApiKey(user_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -830,7 +846,7 @@ server.tool(
     try {
       const result = await client.resetRemotePassword(user_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -855,7 +871,7 @@ server.tool(
     try {
       const result = await client.csvImportDelayedJob(job_data);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -877,7 +893,7 @@ server.tool(
     try {
       const result = await client.deleteDelayedJob(entity_type, entity_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -899,7 +915,7 @@ server.tool(
     try {
       const result = await client.exportReviewSessionFeedbackDelayedJob(review_session_id, options || {});
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -921,7 +937,7 @@ server.tool(
     try {
       const result = await client.iconikSyncStructureDelayedJob(project_id, options || {});
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -942,7 +958,7 @@ server.tool(
     try {
       const result = await client.syncLdapUsersDelayedJob(options || {});
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -973,7 +989,7 @@ server.tool(
     try {
       const result = await client.batch(operations);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -999,12 +1015,12 @@ server.tool(
     try {
       let expression = `select id, name, full_name, status, start_date, end_date from Project`;
       if (!include_archived) {
-        expression += ` where status.name != "archived"`;
+        expression += ` where status is "active"`;
       }
       expression += ` limit ${limit}`;
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1027,7 +1043,7 @@ server.tool(
   },
   async ({ project_id, parent_id, assignee_id, status, limit }) => {
     try {
-      let expression = `select id, name, type.name, status.name, priority.name, start_date, end_date, assignments.resource.username from Task`;
+      let expression = `select id, name, type.name, status.name, priority.name, start_date, end_date, parent.name, project.name, assignments.resource.username from Task`;
       const conditions = [];
       if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
       if (parent_id) conditions.push(`parent_id is "${escapeQL(parent_id)}"`);
@@ -1039,7 +1055,7 @@ server.tool(
       expression += ` limit ${limit}`;
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1066,7 +1082,7 @@ server.tool(
       expression += ` limit ${limit}`;
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1097,7 +1113,7 @@ server.tool(
       expression += ` order by version descending limit ${limit}`;
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1116,7 +1132,7 @@ server.tool(
     try {
       const result = await client.query('select id, name, color, sort from Status order by sort');
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1135,7 +1151,7 @@ server.tool(
     try {
       const result = await client.query('select id, name, sort from Type order by sort');
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1154,7 +1170,7 @@ server.tool(
     try {
       const result = await client.query('select id, name, color, sort from Priority order by sort');
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1183,7 +1199,7 @@ server.tool(
 
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1213,7 +1229,7 @@ server.tool(
       if (author_id) noteData.author_id = author_id;
       const result = await client.create('Note', noteData);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1237,7 +1253,7 @@ server.tool(
       const expression = `select id, content, author.username, date from Note where parent_type is "${escapeQL(entity_type)}" and parent_id is "${escapeQL(entity_id)}" order by date descending limit ${limit}`;
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1259,7 +1275,7 @@ server.tool(
     try {
       const result = await client.update('Task', task_id, { status_id });
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1285,7 +1301,7 @@ server.tool(
         type: 'assignment',
       });
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1304,7 +1320,7 @@ server.tool(
     try {
       const result = await client.query('select id, name, type from SecurityRole');
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
@@ -1331,7 +1347,154 @@ server.tool(
       expression += ` order by created_at descending limit ${limit}`;
       const result = await client.query(expression);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'ftrack_list_shots',
+  'List shots in a project, optionally filtered by parent folder',
+  {
+    project_id: z.string().describe('Project ID'),
+    parent_id: z.string().optional().describe('Parent folder/sequence ID to filter by'),
+    status: z.string().optional().describe('Status name to filter by'),
+    limit: z.number().optional().default(100).describe('Maximum number of shots to return'),
+  },
+  async ({ project_id, parent_id, status, limit }) => {
+    try {
+      let expression = `select id, name, status.name, parent.name, start_date, end_date, custom_attributes from Shot`;
+      const conditions = [`project_id is "${escapeQL(project_id)}"`];
+      if (parent_id) conditions.push(`parent_id is "${escapeQL(parent_id)}"`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
+      expression += ` where ${conditions.join(' and ')}`;
+      expression += ` limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'ftrack_list_asset_builds',
+  'List asset builds in a project',
+  {
+    project_id: z.string().describe('Project ID'),
+    parent_id: z.string().optional().describe('Parent folder ID to filter by'),
+    status: z.string().optional().describe('Status name to filter by'),
+    limit: z.number().optional().default(100).describe('Maximum number of asset builds to return'),
+  },
+  async ({ project_id, parent_id, status, limit }) => {
+    try {
+      let expression = `select id, name, status.name, type.name, parent.name, start_date, end_date from AssetBuild`;
+      const conditions = [`project_id is "${escapeQL(project_id)}"`];
+      if (parent_id) conditions.push(`parent_id is "${escapeQL(parent_id)}"`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
+      expression += ` where ${conditions.join(' and ')}`;
+      expression += ` limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'ftrack_get_project_structure',
+  'Get the folder/hierarchy structure of a project (top-level folders, sequences, etc.)',
+  {
+    project_id: z.string().describe('Project ID'),
+    parent_id: z.string().optional().describe('Parent ID to list children of (defaults to project root)'),
+  },
+  async ({ project_id, parent_id }) => {
+    try {
+      const parentFilter = parent_id
+        ? `parent_id is "${escapeQL(parent_id)}"`
+        : `parent_id is "${escapeQL(project_id)}"`;
+      const expression = `select id, name, object_type.name, status.name, start_date, end_date from TypedContext where project_id is "${escapeQL(project_id)}" and ${parentFilter} order by sort`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'ftrack_list_user_assignments',
+  'List task assignments for a user (what is assigned to them)',
+  {
+    user_id: z.string().describe('User ID'),
+    project_id: z.string().optional().describe('Filter by project ID'),
+    status: z.string().optional().describe('Filter by task status name (e.g., "In progress", "Not started")'),
+    limit: z.number().optional().default(100).describe('Maximum number of assignments to return'),
+  },
+  async ({ user_id, project_id, status, limit }) => {
+    try {
+      let expression = `select id, name, type.name, status.name, priority.name, start_date, end_date, parent.name, project.name from Task where assignments any (resource_id is "${escapeQL(user_id)}")`;
+      if (project_id) expression += ` and project_id is "${escapeQL(project_id)}"`;
+      if (status) expression += ` and status.name is "${escapeQL(status)}"`;
+      expression += ` order by end_date limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'ftrack_list_milestones',
+  'List milestones, optionally filtered by project or date range',
+  {
+    project_id: z.string().optional().describe('Filter by project ID'),
+    start_date: z.string().optional().describe('Filter milestones ending on or after this date (ISO format, e.g. "2026-03-01")'),
+    end_date: z.string().optional().describe('Filter milestones ending on or before this date (ISO format, e.g. "2026-03-31")'),
+    limit: z.number().optional().default(50).describe('Maximum number of milestones to return'),
+  },
+  async ({ project_id, start_date, end_date, limit }) => {
+    try {
+      let expression = `select id, name, end_date, status.name, project.name from Milestone`;
+      const conditions = [];
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (start_date) conditions.push(`end_date >= "${escapeQL(start_date)}"`);
+      if (end_date) conditions.push(`end_date <= "${escapeQL(end_date)}"`);
+      if (conditions.length > 0) {
+        expression += ` where ${conditions.join(' and ')}`;
+      }
+      expression += ` order by end_date limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {
