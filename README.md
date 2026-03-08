@@ -15,7 +15,7 @@ A Model Context Protocol (MCP) server that provides AI assistants (like Claude) 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ftrack-mcp.git
+git clone https://github.com/VFX-Tools-LLC/ftrack-mcp.git
 cd ftrack-mcp
 ```
 
@@ -37,7 +37,25 @@ npm install
 
 ## Configuration
 
-### Step 1: Set Environment Variables (Recommended)
+### Step 1: Set Credentials
+
+**Option A: `.env` file (easiest for local development)**
+
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+```ini
+FTRACK_SERVER=https://your-workspace.ftrackapp.com
+FTRACK_API_USER=your-username
+FTRACK_API_KEY=your-api-key
+```
+
+The `.env` file is automatically loaded at startup and is excluded from git.
+
+**Option B: System Environment Variables (recommended for production)**
 
 The most secure approach is to set your credentials as system environment variables. The MCP server reads from these automatically.
 
@@ -134,7 +152,7 @@ Once configured, you can ask Claude to interact with ftrack using natural langua
 - *"What's the storage usage for my workspace?"*
 - *"List all versions for the compositing task"*
 
-## Available Tools (50+)
+## Available Tools (55+)
 
 ### Query Operations
 | Tool | Description |
@@ -168,6 +186,11 @@ Once configured, you can ask Claude to interact with ftrack using natural langua
 | `ftrack_list_notes` | List notes on an entity |
 | `ftrack_update_task_status` | Change task status |
 | `ftrack_assign_user_to_task` | Assign user to task |
+| `list_shots` | List shots for a project or sequence |
+| `list_asset_builds` | List asset builds for a project |
+| `get_project_structure` | Get top-level hierarchy of a project |
+| `list_user_assignments` | List all tasks assigned to a user |
+| `list_milestones` | List milestones for a project |
 
 ### User & Security Management
 | Tool | Description |
