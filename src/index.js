@@ -6,10 +6,41 @@
  * Implements all 39+ ftrack API operations as MCP tools
  */
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { FtrackClient } from './ftrack-client.js';
+import { FtrackClient, escapeQL, validateIdentifier } from './ftrack-client.js';
+
+/**
+ * Flatten ftrack datetime objects ({ __type__: 'datetime', value: '...' }) into ISO strings.
+ * @param {*} obj
+ * @returns {*}
+ */
+function flattenDatetimes(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map(flattenDatetimes);
+  if (typeof obj === 'object') {
+    if (obj.__type__ === 'datetime' && obj.value) return obj.value;
+    const result = {};
+    for (const [key, val] of Object.entries(obj)) {
+      result[key] = flattenDatetimes(val);
+    }
+    return result;
+  }
+  return obj;
+}
+
+/**
+ * Format an API result for MCP tool response, flattening datetime objects.
+ * @param {*} data
+ * @returns {string}
+ */
+function formatResult(data) {
+  return JSON.stringify(flattenDatetimes(data), null, 2);
+}
 
 // Initialize ftrack client
 let client;
@@ -985,7 +1016,7 @@ server.tool(
     try {
       let expression = `select id, name, full_name, status, start_date, end_date from Project`;
       if (!include_archived) {
-        expression += ` where status.name != "archived"`;
+        expression += ` where status.name is_not "archived"`;
       }
       expression += ` limit ${limit}`;
       const result = await client.query(expression);
@@ -1015,10 +1046,10 @@ server.tool(
     try {
       let expression = `select id, name, type.name, status.name, priority.name, start_date, end_date, assignments.resource.username from Task`;
       const conditions = [];
-      if (project_id) conditions.push(`project_id is "${project_id}"`);
-      if (parent_id) conditions.push(`parent_id is "${parent_id}"`);
-      if (assignee_id) conditions.push(`assignments any (resource_id is "${assignee_id}")`);
-      if (status) conditions.push(`status.name is "${status}"`);
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (parent_id) conditions.push(`parent_id is "${escapeQL(parent_id)}"`);
+      if (assignee_id) conditions.push(`assignments any (resource_id is "${escapeQL(assignee_id)}")`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
       if (conditions.length > 0) {
         expression += ` where ${conditions.join(' and ')}`;
       }
@@ -1161,8 +1192,8 @@ server.tool(
   },
   async ({ entity_type, entity_id, projections }) => {
     try {
-      const attrs = projections?.length ? projections.join(', ') : '*';
-      const expression = `select ${attrs} from ${entity_type} where id is "${entity_id}"`;
+      const attrs = projections?.length ? projections.map(validateIdentifier).join(', ') : '*';
+      const expression = `select ${attrs} from ${validateIdentifier(entity_type)} where id is "${escapeQL(entity_id)}"`;
       const result = await client.query(expression);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -1216,7 +1247,7 @@ server.tool(
   },
   async ({ entity_type, entity_id, limit }) => {
     try {
-      const expression = `select id, content, author.username, date from Note where parent_type is "${entity_type}" and parent_id is "${entity_id}" order by date descending limit ${limit}`;
+      const expression = `select id, content, author.username, date from Note where parent_type is "${escapeQL(entity_type)}" and parent_id is "${escapeQL(entity_id)}" order by date descending limit ${limit}`;
       const result = await client.query(expression);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -1314,6 +1345,156 @@ server.tool(
       const result = await client.query(expression);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_shots',
+  'List shots for a project or parent sequence',
+  {
+    project_id: z.string().optional().describe('Project ID to filter by'),
+    parent_id: z.string().optional().describe('Sequence or parent context ID to filter by'),
+    status: z.string().optional().describe('Status name to filter by'),
+    limit: z.number().optional().default(100).describe('Maximum number of shots to return'),
+  },
+  async ({ project_id, parent_id, status, limit }) => {
+    try {
+      let expression = `select id, name, status.name, parent.name, start_frame, end_frame from Shot`;
+      const conditions = [];
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (parent_id) conditions.push(`parent_id is "${escapeQL(parent_id)}"`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
+      if (conditions.length > 0) {
+        expression += ` where ${conditions.join(' and ')}`;
+      }
+      expression += ` limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_asset_builds',
+  'List asset builds for a project',
+  {
+    project_id: z.string().optional().describe('Project ID to filter by'),
+    asset_type: z.string().optional().describe('Asset type name to filter by (e.g., "Character", "Prop")'),
+    status: z.string().optional().describe('Status name to filter by'),
+    limit: z.number().optional().default(100).describe('Maximum number of asset builds to return'),
+  },
+  async ({ project_id, asset_type, status, limit }) => {
+    try {
+      let expression = `select id, name, type.name, status.name, parent.name from AssetBuild`;
+      const conditions = [];
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (asset_type) conditions.push(`type.name is "${escapeQL(asset_type)}"`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
+      if (conditions.length > 0) {
+        expression += ` where ${conditions.join(' and ')}`;
+      }
+      expression += ` limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'get_project_structure',
+  'Get the top-level structure of a project (immediate children such as sequences, episodes, folders)',
+  {
+    project_id: z.string().describe('Project ID'),
+    limit: z.number().optional().default(200).describe('Maximum number of children to return'),
+  },
+  async ({ project_id, limit }) => {
+    try {
+      const expression = `select id, name, __entity_type__, parent_id from TypedContext where project_id is "${escapeQL(project_id)}" and parent_id is "${escapeQL(project_id)}" limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_user_assignments',
+  'List all tasks assigned to a user, optionally filtered by project or status',
+  {
+    user_id: z.string().describe('User ID to list assignments for'),
+    project_id: z.string().optional().describe('Project ID to filter by'),
+    status: z.string().optional().describe('Task status name to filter by'),
+    limit: z.number().optional().default(100).describe('Maximum number of assignments to return'),
+  },
+  async ({ user_id, project_id, status, limit }) => {
+    try {
+      let expression = `select id, name, type.name, status.name, priority.name, start_date, end_date, project.name from Task`;
+      const conditions = [`assignments any (resource_id is "${escapeQL(user_id)}")`];
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
+      expression += ` where ${conditions.join(' and ')}`;
+      expression += ` limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_milestones',
+  'List milestones for a project',
+  {
+    project_id: z.string().optional().describe('Project ID to filter by'),
+    status: z.string().optional().describe('Status name to filter by'),
+    limit: z.number().optional().default(100).describe('Maximum number of milestones to return'),
+  },
+  async ({ project_id, status, limit }) => {
+    try {
+      let expression = `select id, name, status.name, date from Milestone`;
+      const conditions = [];
+      if (project_id) conditions.push(`project_id is "${escapeQL(project_id)}"`);
+      if (status) conditions.push(`status.name is "${escapeQL(status)}"`);
+      if (conditions.length > 0) {
+        expression += ` where ${conditions.join(' and ')}`;
+      }
+      expression += ` order by date ascending limit ${limit}`;
+      const result = await client.query(expression);
+      return {
+        content: [{ type: 'text', text: formatResult(result) }],
       };
     } catch (error) {
       return {

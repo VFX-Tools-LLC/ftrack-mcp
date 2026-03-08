@@ -66,7 +66,7 @@ export class FtrackClient {
    */
   async callOne(operation) {
     const results = await this.call([operation]);
-    return results[0];
+    return results?.[0] ?? null;
   }
 
   // ============================================================
@@ -574,6 +574,31 @@ export class FtrackClient {
   async batch(operations) {
     return this.call(operations);
   }
+}
+
+/**
+ * Escape a string value for safe interpolation into ftrack QL string literals.
+ * Escapes backslashes first, then double-quote characters.
+ * Usage: `name is "${escapeQL(userInput)}"`
+ * @param {string} value
+ * @returns {string}
+ */
+export function escapeQL(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Validate that a string is a safe ftrack QL identifier (entity type, field name, etc.).
+ * Allows letters, digits, underscores, and dots. Must start with a letter or underscore.
+ * Throws a TypeError if the value does not match the whitelist pattern.
+ * @param {string} name
+ * @returns {string} - the original value, if valid
+ */
+export function validateIdentifier(name) {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(name)) {
+    throw new TypeError(`Invalid ftrack identifier: "${name}"`);
+  }
+  return name;
 }
 
 export default FtrackClient;
