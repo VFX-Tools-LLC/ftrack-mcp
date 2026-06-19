@@ -13,6 +13,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { FtrackClient, escapeQL, validateIdentifier } from './ftrack-client.js';
+import {
+  buildClearCustomAttributesData,
+  mergeHierarchyPlans,
+  planHierarchyLevel,
+  validateCustomAttributeKeys,
+} from './hierarchy-planner.js';
 
 /**
  * Flatten ftrack datetime objects ({ __type__: 'datetime', value: '...' }) into ISO strings.
@@ -40,6 +46,75 @@ function flattenDatetimes(obj) {
  */
 function formatResult(data) {
   return JSON.stringify(flattenDatetimes(data), null, 2);
+}
+
+function queryRows(result) {
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result)) return result;
+  return [];
+}
+
+async function queryHierarchyChildren(entityType, projectId, parentId) {
+  const safeType = validateIdentifier(entityType, 'entity_type');
+  const expression = `select id, name, parent_id, project_id, custom_attributes from ${safeType} where project_id is "${escapeQL(projectId)}" and parent_id is "${escapeQL(parentId)}" limit 1000`;
+  return queryRows(await client.query(expression));
+}
+
+async function queryTasksForParents(projectId, parentIds) {
+  const tasksByParentId = new Map();
+  for (const parentId of parentIds) {
+    tasksByParentId.set(parentId, await queryHierarchyChildren('Task', projectId, parentId));
+  }
+  return tasksByParentId;
+}
+
+async function runOperationsInChunks(operations, chunkSize = 50) {
+  const results = [];
+  for (let i = 0; i < operations.length; i += chunkSize) {
+    const chunk = operations.slice(i, i + chunkSize);
+    if (chunk.length > 0) {
+      results.push(...(await client.batch(chunk)));
+    }
+  }
+  return results;
+}
+
+function findRecordByName(records, name) {
+  return records.find((record) => record.name === name) || null;
+}
+
+function hydrateCreatedRecords(records, recordsByParentId, entityType) {
+  return records.map((record) => {
+    if (record.entity_type !== entityType || record.id) return record;
+    const created = findRecordByName(recordsByParentId.get(record.parent_id) || [], record.name);
+    return created ? { ...record, id: created.id } : record;
+  });
+}
+
+function rootNodeKey(entityType, name) {
+  return `${entityType}:${name}`;
+}
+
+function summarizeOperationRecord(record) {
+  return {
+    id: record.id || null,
+    name: record.name,
+    entity_type: record.entity_type,
+    parent_id: record.parent_id || null,
+    parent_ref: record.parent_ref || null,
+  };
+}
+
+function summarizePlan(plan) {
+  return {
+    creates: plan.creates.map(summarizeOperationRecord),
+    reused: plan.reused.map(summarizeOperationRecord),
+    updated: plan.updated,
+    renamed: plan.renamed,
+    custom_attributes_cleared: plan.custom_attributes_cleared,
+    skipped: plan.skipped,
+    errors: plan.errors,
+  };
 }
 
 // Initialize ftrack client
@@ -991,6 +1066,330 @@ server.tool(
       const result = await client.batch(operations);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+const taskHierarchyNodeSchema = z.object({
+  name: z.string().describe('Task name. Must match ^[A-Za-z0-9_]+$'),
+  existing_id: z.string().optional().describe('Existing Task ID to reuse or rename. Required for renames.'),
+  rename_to: z.string().optional().describe('Optional new task name. Requires existing_id.'),
+  clear_custom_attributes: z.boolean().optional().default(false).describe('Clear selected custom attributes on an existing task'),
+  custom_attribute_keys: z.array(z.string()).optional().describe('Custom attribute keys to clear when clear_custom_attributes is true'),
+  fields: z.record(z.any()).optional().describe('Additional fields for create/update; cannot override id/name/parent/project/custom_attributes'),
+});
+
+const hierarchyNodeSchema = z.object({
+  name: z.string().describe('Root entity name. Must match ^[A-Za-z0-9_]+$'),
+  existing_id: z.string().optional().describe('Existing entity ID to reuse or rename. Required for renames.'),
+  rename_to: z.string().optional().describe('Optional new entity name. Requires existing_id.'),
+  clear_custom_attributes: z.boolean().optional().default(false).describe('Clear selected custom attributes on an existing entity'),
+  custom_attribute_keys: z.array(z.string()).optional().describe('Custom attribute keys to clear when clear_custom_attributes is true'),
+  fields: z.record(z.any()).optional().describe('Additional fields for create/update; cannot override id/name/parent/project/custom_attributes'),
+  tasks: z.array(taskHierarchyNodeSchema).optional().describe('Tasks to upsert directly under this root entity'),
+});
+
+const hierarchyRootSchema = z.object({
+  parent_id: z.string().describe('Allowlisted existing parent context ID where root entities may be created or reused'),
+  entity_type: z.enum(['AssetBuild', 'Shot']).describe('Root entity type to upsert under parent_id'),
+  parent_ref: z.string().optional().describe('Optional display label for this parent in plan results'),
+  nodes: z.array(hierarchyNodeSchema).describe('Root entities to upsert under this parent'),
+});
+
+function findResolvedRoot(plan, entityType, node) {
+  const desiredName = node.rename_to || node.name;
+  return plan.resolved.find((record) => record.entity_type === entityType && record.name === desiredName) || null;
+}
+
+async function buildDryRunTaskPlan(projectId, rootPlan, rootSpec) {
+  const plans = [];
+  for (const node of rootSpec.nodes || []) {
+    const tasks = node.tasks || [];
+    if (tasks.length === 0) continue;
+
+    const root = findResolvedRoot(rootPlan, rootSpec.entity_type, node);
+    if (!root) {
+      plans.push({
+        ...mergeHierarchyPlans(),
+        errors: [{
+          message: 'Parent was not resolved; refusing to plan child tasks',
+          item: { entity_type: rootSpec.entity_type, name: node.name },
+        }],
+      });
+      continue;
+    }
+
+    const existingTasks = root.id ? await queryHierarchyChildren('Task', projectId, root.id) : [];
+    plans.push(planHierarchyLevel({
+      projectId,
+      parentId: root.id,
+      parentRef: rootNodeKey(rootSpec.entity_type, root.name),
+      parentKind: rootSpec.parent_ref || rootSpec.parent_id,
+      entityType: 'Task',
+      nodes: tasks,
+      existingChildren: existingTasks,
+      allowCreates: Boolean(root.id),
+    }));
+  }
+  return mergeHierarchyPlans(...plans);
+}
+
+async function buildCommittedTaskPlan(projectId, rootSpec, rootRecords) {
+  const plans = [];
+  for (const node of rootSpec.nodes || []) {
+    const tasks = node.tasks || [];
+    if (tasks.length === 0) continue;
+
+    const desiredName = node.rename_to || node.name;
+    const root = findRecordByName(rootRecords, desiredName);
+    if (!root) {
+      plans.push({
+        ...mergeHierarchyPlans(),
+        errors: [{
+          message: 'Parent was not found after root commit; refusing child task writes',
+          item: { entity_type: rootSpec.entity_type, name: desiredName },
+        }],
+      });
+      continue;
+    }
+
+    const existingTasks = await queryHierarchyChildren('Task', projectId, root.id);
+    plans.push(planHierarchyLevel({
+      projectId,
+      parentId: root.id,
+      parentRef: rootNodeKey(rootSpec.entity_type, root.name),
+      parentKind: rootSpec.parent_ref || rootSpec.parent_id,
+      entityType: 'Task',
+      nodes: tasks,
+      existingChildren: existingTasks,
+    }));
+  }
+  return mergeHierarchyPlans(...plans);
+}
+
+async function buildVerificationSummary(projectId, rootGroups) {
+  const summary = [];
+  for (const group of rootGroups) {
+    const roots = [];
+    for (const root of group.roots) {
+      const tasks = await queryHierarchyChildren('Task', projectId, root.id);
+      roots.push({
+        id: root.id,
+        name: root.name,
+        tasks: tasks.map((task) => ({ id: task.id, name: task.name })),
+      });
+    }
+    summary.push({
+      parent_id: group.parent_id,
+      parent_ref: group.parent_ref,
+      entity_type: group.entity_type,
+      roots,
+    });
+  }
+  return summary;
+}
+
+server.tool(
+  'ftrack_clear_custom_attributes',
+  'Clear custom attributes on a single ftrack entity using native custom_attributes mapping',
+  {
+    entity_type: z.string().describe('Entity type to update, e.g. AssetBuild, Shot, or Task'),
+    entity_id: z.string().describe('Entity ID to update'),
+    keys: z.array(z.string()).min(1).describe('Custom attribute keys to clear'),
+  },
+  async ({ entity_type, entity_id, keys }) => {
+    try {
+      const safeType = validateIdentifier(entity_type, 'entity_type');
+      const clearKeys = validateCustomAttributeKeys(keys);
+      const result = await client.update(safeType, entity_id, buildClearCustomAttributesData(clearKeys));
+      return {
+        content: [{
+          type: 'text',
+          text: formatResult({
+            entity_type: safeType,
+            entity_id,
+            custom_attributes_cleared: clearKeys,
+            result,
+          }),
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'ftrack_batch_upsert_hierarchy',
+  'Safely create/reuse/rename root entities and Tasks under explicit allowlisted parents',
+  {
+    project_id: z.string().describe('Project ID that owns the hierarchy'),
+    writable_parent_ids: z.array(z.string()).min(1).describe('Explicit allowlist of parent IDs this operation may write under'),
+    mode: z.enum(['dry_run', 'commit']).optional().default('dry_run').describe('dry_run plans only; commit applies safe chunks and verifies the resulting tree'),
+    chunk_size: z.number().int().positive().max(100).optional().default(50).describe('Maximum operations per ftrack batch call in commit mode'),
+    tree: z.object({
+      roots: z.array(hierarchyRootSchema).min(1).describe('Root entity groups to upsert under allowlisted parent IDs'),
+    }).describe('Hierarchy payload'),
+  },
+  async ({ project_id, writable_parent_ids, mode, chunk_size, tree }) => {
+    try {
+      const writableParentIds = new Set(writable_parent_ids);
+
+      for (const rootSpec of tree.roots) {
+        if (!writableParentIds.has(rootSpec.parent_id)) {
+          throw new Error(`root parent_id ${rootSpec.parent_id} must be included in writable_parent_ids`);
+        }
+      }
+
+      const rootPlanParts = [];
+      for (const rootSpec of tree.roots) {
+        const existingRoots = await queryHierarchyChildren(rootSpec.entity_type, project_id, rootSpec.parent_id);
+        rootPlanParts.push(planHierarchyLevel({
+          projectId: project_id,
+          parentId: rootSpec.parent_id,
+          parentRef: rootSpec.parent_ref || rootSpec.parent_id,
+          parentKind: rootSpec.parent_ref || rootSpec.parent_id,
+          entityType: rootSpec.entity_type,
+          nodes: rootSpec.nodes,
+          existingChildren: existingRoots,
+        }));
+      }
+      const rootPlan = mergeHierarchyPlans(...rootPlanParts);
+
+      if (mode === 'dry_run') {
+        const taskPlanParts = [];
+        for (const rootSpec of tree.roots) {
+          taskPlanParts.push(await buildDryRunTaskPlan(project_id, rootPlan, rootSpec));
+        }
+        const taskPlan = mergeHierarchyPlans(...taskPlanParts);
+        const fullPlan = mergeHierarchyPlans(rootPlan, taskPlan);
+        return {
+          content: [{
+            type: 'text',
+            text: formatResult({
+              mode,
+              committed: false,
+              ...summarizePlan(fullPlan),
+            }),
+          }],
+        };
+      }
+
+      if (rootPlan.errors.length > 0) {
+        return {
+          content: [{
+            type: 'text',
+            text: formatResult({
+              mode,
+              committed: false,
+              errors: rootPlan.errors,
+              message: 'Root hierarchy validation failed; no writes were applied.',
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      const preCommitTaskPlanParts = [];
+      for (const rootSpec of tree.roots) {
+        preCommitTaskPlanParts.push(await buildDryRunTaskPlan(project_id, rootPlan, rootSpec));
+      }
+      const preCommitTaskPlan = mergeHierarchyPlans(...preCommitTaskPlanParts);
+
+      if (preCommitTaskPlan.errors.length > 0) {
+        return {
+          content: [{
+            type: 'text',
+            text: formatResult({
+              mode,
+              committed: false,
+              errors: preCommitTaskPlan.errors,
+              message: 'Task hierarchy validation failed; no writes were applied.',
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      await runOperationsInChunks(rootPlan.operations, chunk_size);
+
+      const taskPlanParts = [];
+      for (const rootSpec of tree.roots) {
+        const records = await queryHierarchyChildren(rootSpec.entity_type, project_id, rootSpec.parent_id);
+        taskPlanParts.push(await buildCommittedTaskPlan(project_id, rootSpec, records));
+      }
+      const taskPlan = mergeHierarchyPlans(...taskPlanParts);
+
+      if (taskPlan.errors.length > 0) {
+        return {
+          content: [{
+            type: 'text',
+            text: formatResult({
+              mode,
+              committed: true,
+              root_operations_committed: true,
+              errors: taskPlan.errors,
+              message: 'Root operations were committed, but task validation failed before task writes.',
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      await runOperationsInChunks(taskPlan.operations, chunk_size);
+
+      const requestedRootGroups = [];
+      const rootIds = [];
+      const recordsByParentId = new Map();
+      for (const rootSpec of tree.roots) {
+        const records = await queryHierarchyChildren(rootSpec.entity_type, project_id, rootSpec.parent_id);
+        recordsByParentId.set(rootSpec.parent_id, records);
+        const requestedRoots = rootSpec.nodes
+          .map((node) => findRecordByName(records, node.rename_to || node.name))
+          .filter(Boolean);
+        requestedRootGroups.push({
+          parent_id: rootSpec.parent_id,
+          parent_ref: rootSpec.parent_ref || rootSpec.parent_id,
+          entity_type: rootSpec.entity_type,
+          roots: requestedRoots,
+        });
+        rootIds.push(...requestedRoots.map((record) => record.id));
+      }
+      const tasksByParentId = await queryTasksForParents(project_id, rootIds);
+      for (const [parentId, tasks] of tasksByParentId.entries()) {
+        recordsByParentId.set(parentId, tasks);
+      }
+
+      const fullPlan = mergeHierarchyPlans(rootPlan, taskPlan);
+      fullPlan.creates = [
+        ...fullPlan.creates.flatMap((record) => hydrateCreatedRecords([record], recordsByParentId, record.entity_type)),
+      ].filter((record, index, records) => (
+        records.findIndex((candidate) => (
+          candidate.entity_type === record.entity_type &&
+          candidate.name === record.name &&
+          candidate.parent_ref === record.parent_ref
+        )) === index
+      ));
+
+      return {
+        content: [{
+          type: 'text',
+          text: formatResult({
+            mode,
+            committed: true,
+            ...summarizePlan(fullPlan),
+            verification: await buildVerificationSummary(project_id, requestedRootGroups),
+          }),
+        }],
       };
     } catch (error) {
       return {

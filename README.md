@@ -151,6 +151,42 @@ Once configured, you can ask Claude to interact with ftrack using natural langua
 - *"Update the status of task XYZ to 'In Progress'"*
 - *"What's the storage usage for my workspace?"*
 - *"List all versions for the compositing task"*
+- *"Dry-run creating the same tasks under multiple existing parent contexts"*
+
+### Safe hierarchy setup
+
+Use `ftrack_batch_upsert_hierarchy` for production setup work that needs to create or normalize the same task structure under multiple root entities. The tool is scoped to explicit parent IDs, defaults to `dry_run`, and only writes in `mode: "commit"`.
+
+```json
+{
+  "project_id": "project-id",
+  "writable_parent_ids": ["parent-context-id"],
+  "mode": "dry_run",
+  "tree": {
+    "roots": [
+      {
+        "parent_id": "parent-context-id",
+        "entity_type": "Shot",
+        "parent_ref": "example-parent",
+        "nodes": [
+          {
+            "name": "sh010",
+            "tasks": [{ "name": "Animation" }, { "name": "Compositing" }]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Safety rules:
+- Names must match `^[A-Za-z0-9_]+$`.
+- Root entities are only created under parent IDs included in `writable_parent_ids`.
+- Tasks are only created under root entities created/reused by the same operation.
+- Renames require `existing_id`.
+- No deletes are performed.
+- Custom attributes can be cleared with `clear_custom_attributes: true` and explicit `custom_attribute_keys`.
 
 ## Available Tools (55+)
 
@@ -170,6 +206,8 @@ Once configured, you can ask Claude to interact with ftrack using natural langua
 | `ftrack_update` | Update entity attributes |
 | `ftrack_delete` | Delete entities |
 | `ftrack_batch` | Execute multiple operations atomically |
+| `ftrack_batch_upsert_hierarchy` | Safely upsert AssetBuild/Shot/Task hierarchy under allowlisted parents |
+| `ftrack_clear_custom_attributes` | Clear selected custom attributes on one entity |
 
 ### Convenience Tools
 | Tool | Description |

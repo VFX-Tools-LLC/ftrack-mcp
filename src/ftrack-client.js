@@ -6,7 +6,7 @@
 export class FtrackClient {
   constructor(serverUrl, apiUser, apiKey) {
     // Remove trailing slash if present
-    this.serverUrl = serverUrl?.replace(/\/$/, '') || process.env.FTRACK_SERVER;
+    this.serverUrl = serverUrl?.replace(/\/+$/, '') || process.env.FTRACK_SERVER?.replace(/\/+$/, '');
     this.apiUser = apiUser || process.env.FTRACK_API_USER;
     this.apiKey = apiKey || process.env.FTRACK_API_KEY;
 
